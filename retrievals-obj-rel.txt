@@ -1,0 +1,7 @@
+moment	DP2	VP2	VP2	VP1
+cat	NP	NP	DP	NP
+mom_cat	IP	I-bar	CP	IP
+role	spec	spec	spec	spec
+number	sing	sing	NULL	sing
+NOM	yes	yes	NULL	yes
+ACC	NULL	NULL	NULL	NULL
