@@ -21,8 +21,8 @@ library(plyr)
 library(lme4)
 library(lme4)
 library(ggplot2)
-source("actr.r")
-source("act-r-model.r")
+source("actr.R")
+source("sim_actr.R")
 
 RC <- list(
 
@@ -45,7 +45,8 @@ RC <- list(
 
 #run_model will run nsims x num_experimental_items, while every row in actr_par is treated as a different subject
 
-sim_RC <- sim_actr(RC,nsim=1)
+
+sim_RC <- sim_actr(RC,nsim=10)
 
 summary(sim_RC,removeNaN=T)
 summary(sim_RC,latencies=TRUE)

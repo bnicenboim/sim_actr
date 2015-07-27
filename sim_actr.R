@@ -1,32 +1,12 @@
 library(plyr)
 
-create_schedule <- function(unformated_schedule){
+run_actr_each_condition <- function(data_list,actr_par=NULL,nsim=1) {
+   
+   if (is.null(actr_par)){
+    actr_par <- actr_default_1subj
+   }
 
-  if(is.data.frame(unformated_schedule)){
-    schedule <- unformated_schedule
-  }  else if(is.matrix(unformated_schedule)){
-    schedule <- data.frame(unformated_schedule)
-  } else if(file.exists(unformated_schedule)){
-    schedule <- read.delim(file=unformated_schedule,header=FALSE,colClasses="character", row.names=1)
-  } else {
-    stop(paste("Error in ",names(args)[1]," file or data.frame"))
-  }
-
-  schedule <- t(schedule)
-  rownames(schedule) <- NULL
-  schedule<-data.frame(schedule)
-
-  
-  #validation of the row names
-  colnames(schedule) <- make.names(colnames(schedule))
-  return(schedule)
-  
-}
-
-
-run_actr_each_condition <- function(data_list,actr_par,nsim) {
   print("Starting to run model....")
-
 
   ## Read in the creation schedule:
   chunks <- create_schedule(data_list$creation_schedule)
@@ -71,74 +51,80 @@ run_actr_each_condition <- function(data_list,actr_par,nsim) {
   #simulation of trials
   #every row in actr_par can be treated as a different subject
   nsubj <- nrow(actr_par)
-  sim_trials <-  data.frame(
-    item=rep(1:data_list$num_experimental_items,each=nrow(retrievals),times=nsim*nsubj),
-    exp= rep(1:nsim,each=data_list$num_experimental_items*nrow(retrievals),times=nsubj ))
-  #each retrieval for each subj for each item for each experiment:
-  retr_subj <- actr_par[rep(seq_len(nrow(actr_par)), each=nrow(retrievals)*data_list$num_experimental_items*nsim),]
-  subjects <- rep(seq_len(nrow(actr_par)), each=nrow(retrievals)*data_list$num_experimental_items*nsim)
-  sim_trials <- cbind(sim_trials,retr_subj )
-  sim_trials <- cbind(subj=subjects, sim_trials)
-  rep_retr <- retrievals[rep(seq_len(nrow(retrievals)), data_list$num_experimental_items*nsim),]
+  nretrievals <- nrow(retrievals)
+  unique_trials <-   data.frame(exp= rep(1:nsim,each=nsubj*data_list$num_experimental_items ),
+    subj=rep(1:nsubj, each=data_list$num_experimental_items,times=nsim),
+    item=rep(1:data_list$num_experimental_items,times=nsim*nsubj)
+    )
+  unique_trials_params <- cbind(unique_trials,repeat_row(actr_par,each=data_list$num_experimental_items,times=nsim))
 
-  row.names(rep_retr) <- NULL
-  row.names(sim_trials) <- NULL
-  sim_retrievals <- cbind(rep_retr,sim_trials)
+  rep_trials <- (repeat_row(unique_trials_params,each=nretrievals))
+  rownames(rep_trials)<- NULL
+  rep_retr <- repeat_row(retrievals,times=nsubj*data_list$num_experimental_items*nsim)
+  rownames(rep_retr) <- NULL
+ 
+  #all the retrievals schedule in all the trials, moment is at which creation the retrieval is triggered:
+  sim_retrievals <- cbind(rep_trials,rep_retr)  
+
+ 
+  nunique_trials<- nrow(unique_trials)
+
+  trials_history <- repeat_row(cbind(wordn=rownames(chunks),chunks),times=nunique_trials)
+  #I add a new level failure for when no chunk is retrieved:
+  trials_history$name <- factor(trials_history$name, levels=c(levels(chunks$name),"failure"))
+  
+  trials_h <- repeat_row(unique_trials,each=nrow(chunks))
+  rownames(trials_h) <- NULL
+  history <- cbind(trials_h,trials_history)
 
 
-  #save here the histories of retrievals
-  histories <- list()
+  available_moment <- cbind(unique_trials,available_at=-1) #before any retrieval
+  
+  repeated_par <- repeat_row(actr_par, each=data_list$num_experimental_items)  
+  rownames(repeated_par) <- NULL
+  retrieval_moment <- cbind(unique_trials,repeated_par)
+  retrieval_moment$moment <- NA
+  res <- data.frame()
+  
+  for(r in unique(sim_retrievals$retr)){
+    #this checks if the retrieval can be done as schedule (a[r,]$moment) or delayed to the next available moment (available_moment) #that is, after the previous retrieval was completed
+    scheduled_moment  <- chunks[chunks$name %in% sim_retrievals[sim_retrievals$retr %in% r,]$moment,]$created
 
+    retrieval_moment$moment <- pmax(available_moment$available_at, scheduled_moment )
 
-  #this is the results of all the retrievals in all the simulations
-  results <- ddply(sim_retrievals, .(subj,item,exp), function(a){
-    #test with a <- sim_retrievals[sim_retrievals$item==1 & sim_retrievals$exp==1 & sim_retrievals$subj ==1,]
-    #the first history for each itemxexp combination is just the creation schedule
-    history <- data.frame(chunk=rownames(chunks),name=as.character(chunks$name),moment=chunks$created, stringsAsFactors = FALSE)  #I will add failure, so I need the columns to be characters and not factors
+    retrieval_cues <- sim_retrievals[sim_retrievals$retr %in% r,colnames(sim_retrievals) %in% cue_names]
 
-    #history:
-  #   chunk name moment
-  # 1 word1  NP1      0
-  # 2 word2  DP2    400
-  # 3 word3  VP2    600
-  # 4 word4  NP2    800
-  # 5 word5  NP3   1400
-  # 6 word6  VP1   1800
-
-    #moment of the first retrieval: look for retrieval moment when the item was created:
-    
-    available_moment <- -1 #before any retrieval
-    res <- data.frame()
-    for(r in 1:length(unique(a$retr))){
-      #this checks if the retrieval can be done as schedule (a[r,]$moment) or delayed to the next available moment (available_moment) #that is, after the previous retrieval was completed
-      scheduled_moment  <- chunks[chunks$name %in% a[r,]$moment,]$created
-
-      retrieval_moment <- max(available_moment, scheduled_moment)
-      
-      actr_par_retr <- a[1,colnames(a) %in% colnames(actr_par)  ]
-      retrieval_cues <- a[r,colnames(a) %in% cue_names]
-      ret <- retrieve(cue_names,retrieval_cues , retrieval_moment,chunks,history,actr_par_retr )
-      history <- ret$newhistory
-      ret$output$retr <- as.character(a[r,]$retr)
-      ret$output$retrieval_at <- as.character(a[r,]$moment)
-      available_moment <- ret$finished_at
-
-      #ASK FELIX IF I SHOULD LEAVE TIME FOR THE RULE
-      res <- rbind(res, ret$output)
+    #all the retrieval cues should be the same, since these are different trials of the same retrieval
+    if(nrow(unique(retrieval_cues))!=1){
+      stop("something's wrong!!")
     }
-    histories <<- c(histories,list(history))
+    retrieval_cues <- unique(retrieval_cues)
 
-    return(res)
-  }) 
+    history <- history[order(history$exp,history$subj,history$item,history$created),]
+
+    ret <- retrieve(cue_names,retrieval_cues, retrieval_moment,history)
+
+    history <- ret$newhistory
+    ret$output$retr <- r
+
+    ret$output$retrieval_at <- as.character(sim_retrievals[sim_retrievals$retr %in% r,]$moment)
+    available_moment$available_at <- ret$finished_at
+
+    #ASK FELIX IF I SHOULD LEAVE TIME FOR THE RULE
+    res <- rbind(res, ret$output)
+    }
+    
+    
+results<-res    
+
 
 latencies <- ddply(subset(results,winner==1),.(exp,subj,item,retrieval_at),summarize,latency=sum(final_latency))
 
-  complete_results =list(results=results,latencies=latencies,histories=histories)
+  complete_results =list(results=results,latencies=latencies,history=history)
   return(complete_results)
 }
 
 
-library(plyr)
 
 sim_actr <- function(conditions_list,actr_par=NULL,nsim=1){
   if (is.null(actr_par)){
@@ -159,6 +145,13 @@ attr(output, "class") <- "actr"
 
   return(output)  
 }
+
+
+
+repeat_row <- function(data,...){
+  data[ rep(seq_len(nrow(data)), ...),]  
+}
+
 
 actr_default <- list(
 ## Latency factor
@@ -193,6 +186,30 @@ actr_default_1subj <- as.data.frame(actr_default)
 
 
 
+create_schedule <- function(unformated_schedule){
+
+  if(is.data.frame(unformated_schedule)){
+    schedule <- unformated_schedule
+  }  else if(is.matrix(unformated_schedule)){
+    schedule <- data.frame(unformated_schedule)
+  } else if(file.exists(unformated_schedule)){
+    schedule <- read.delim(file=unformated_schedule,header=FALSE,colClasses="character", row.names=1)
+  } else {
+    stop(paste("Error in ",names(args)[1]," file or data.frame"))
+  }
+
+  schedule <- t(schedule)
+  rownames(schedule) <- NULL
+  schedule<-data.frame(schedule)
+
+  
+  #validation of the row names
+  colnames(schedule) <- make.names(colnames(schedule))
+  return(schedule)
+  
+}
+
+
 
 summary.actr <- function(output,latencies=FALSE,by_subj=FALSE,removeNaN=FALSE){
     
@@ -210,11 +227,11 @@ summary.actr <- function(output,latencies=FALSE,by_subj=FALSE,removeNaN=FALSE){
     
     } else if(!latencies & by_subj){
     
-      df <- ddply(l$results,.(subj,retr,name,chunk),summarize,P=mean(winner),mean_latency=mean(final_latency,na.rm=T),mean_activation=mean(final_activation))
+      df <- ddply(l$results,.(subj,retr,wordn,name),summarize,P=mean(winner),mean_latency=mean(final_latency,na.rm=T),mean_activation=mean(final_activation))
     
     } else if(!latencies & !by_subj){ 
 
-      df<-  ddply(l$results,.(retr,name,chunk),summarize,P=mean(winner),mean_latency=mean(final_latency,na.rm=T),mean_activation=mean(final_activation))
+      df<-  ddply(l$results,.(retr,wordn,name),summarize,P=mean(winner),mean_latency=mean(final_latency,na.rm=T),mean_activation=mean(final_activation))
       }
     return(df)
   })
@@ -224,9 +241,17 @@ summary.actr <- function(output,latencies=FALSE,by_subj=FALSE,removeNaN=FALSE){
     summ <- summ[!is.nan(summ$mean_latency),]
   }
 
+
+nitem<-  llply(output$results, function(l){
+    return(max(l$results$item))
+  })
+
+
   lines <- c("# Summary of simulations",
     paste("# Number of simulations: ",output$nsim),
+    paste(paste("# Number of items ",names(nitem)),nitem),
     paste("# Number of simulated subjects: ",nrow(output$actr_par),"\n"))
+
   cat(paste(lines,collapse="\n"))
   return(summ)
 }

@@ -53,32 +53,30 @@ verify_actr_par <- function(actr_par){
 ## a column vector for each past retrieval moment, where the column vector
 ## identifies the winning item for each trial.
 
-compute_base_levels <- function(moment,history,actr_par_retr) {
+compute_base_levels <- function(retrieval_moment,history) {
 
   #remove the failure from the history to not calculate an activation level for it
-  history <- history[!history$chunk %in% "failure",]
-
-  moments <- history$moment
+  chistory <- history[!history$name %in% "failure",]
+  chunk_names <- unique(chistory$name)
+  nchunks <- length(chunk_names)
   ## time since last retrieval for each retrieval (converted from milliseconds)
-  tj <- (moment/1000) - (moments/1000);
+  chistory <- merge(chistory,retrieval_moment[c("exp","subj","item","moment","d")])
+  chistory$tj <- (chistory$moment - chistory$created)/1000
+  
   
   ## just pay attention to past, not future
-  past <- history[ tj > 0,];
+  chistory[ chistory$tj <= 0,]$tj <- NA
+
   
   ## the decay function
-  tjd <- tj ^ (-actr_par_retr$d)
-  decay <- tjd[tj > 0];
+  chistory$activation <- chistory$tj ^ -(chistory$d)
   
-  ## compute base level activation for each chunk (for each trial)
-  base_levels <- data.frame(chunk=unique(history$chunk));
-  base_levels$levels <- NA
-  for (c in unique(history$chunk)) {
-    retrievals_boolean <- past$chunk == c;                  # boolean matrix
-    activations <- retrievals_boolean * decay;
-    b <- log(sum(activations,na.rm=TRUE));     # sum over all j retrievals
-    b[is.infinite(b)] <- 0;                      # don't propagate through infinite values
-    base_levels[base_levels$chunk ==c,]$levels <- b;
-  }
+  base_levels<- ddply(chistory,.(exp,subj,item,wordn,name),summarize, activation=log(sum(activation,na.rm=TRUE)))
+
+  
+
+   base_levels[is.infinite(base_levels$activation),]$activation<- 0
+
   return(base_levels);
 }
 
@@ -89,130 +87,156 @@ compute_base_levels <- function(moment,history,actr_par_retr) {
 ## retrieval.  Updates the history matrix with the winning items for this
 ## retrieval moment over all the trials.
 
-retrieve <- function(cue_names,retrieval_cues,retrieval_moment,chunks,history,actr_par_retr) {
-
-  num_features  <- length(cue_names)
-  chunk_features <- chunks[,colnames(chunks) %in% cue_names ]
-  creation_moment <- chunks$created
-  num_chunks <- nrow(chunks)
-  num_cues <- length(retrieval_cues[toupper(as.character(retrieval_cues))!="NULL"]);
+retrieve <- function(cue_names,retrieval_cues,retrieval_moment,history) {
 
     ## compute base level activations
-    base_levels <- compute_base_levels(retrieval_moment,history,actr_par_retr)
+  base_levels <- compute_base_levels(retrieval_moment,history)
+  
+  nchunks <- length(unique(base_levels$name))
 
-    ## compute the match between chunks and retrieval cues (a boolean matrix)
-    cues <- matrix(data=as.matrix(retrieval_cues),nrow=num_chunks, ncol=num_features,byrow=TRUE)
-    is.nil <- chunk_features == "nil";    
-    is_variable_cue <- cues == "VAR"; ##ASK FELIX
+  cues <- unique(history[colnames(history) %in% c("name",cue_names)])
+  base_levels_cues <- merge(base_levels,cues,by="name",all.x=TRUE,all.y=FALSE,sort=FALSE)
+  base_levels_cues <- base_levels_cues[order(base_levels_cues$exp,base_levels_cues$subj,base_levels_cues$item,base_levels_cues$wordn),] #previous order
 
-    match <- (chunk_features == cues);
-    match_inc_var <- match | (is_variable_cue & !is.nil);
+  trial_info <-base_levels_cues[c("exp","subj","item")]
+  unique_trials <- unique(trial_info)
 
-    ## checks which chunks exist at this moment
-    exists <- matrix(creation_moment < retrieval_moment,nrow=num_chunks,ncol=num_features);
+  base_levels_cues_m <- as.matrix(base_levels_cues[colnames(base_levels_cues) %in% cue_names])
+  
 
-    ## checks which chunks match category cue
-    chunk_category <- chunk_features[,cue_names=="cat"];
-    cue_category <- cues[,cue_names=="cat"];
-    matches_category <- chunk_category == cue_category
+  retrieval_cues_m <- as.matrix(repeat_row(retrieval_cues,each=nrow(base_levels_cues)))
 
-    ## compute fan for each feature: number of existing chunks matching each feature
-    fan <- colSums(match_inc_var & exists) +  actr_par_retr$VAR.fan * is_variable_cue[1,];
-    strength <- actr_par_retr$mas - log(fan)                       # fan equation
+  retrieval_moment_d <- repeat_row(retrieval_moment,each=nchunks)
+
+  match <- base_levels_cues_m == retrieval_cues_m
+
+  is_nil <- base_levels_cues_m == "nil";    
+  is_variable_cue <- retrieval_cues_m =="VAR"  ##ASK FELIX
+  match_inc_var <- match | (is_variable_cue & !is_nil)
+
+   ## checks which chunks exist at this moment
+  earliest_history <- ddply(subset(history,!name %in% "failure") ,.(exp,subj,item,wordn,name),summarize,earliest_moment= min(created))
+  exists <- earliest_history$earliest_moment < retrieval_moment_d$moment
 
 
-    ## compute source activation available for each cue (source spread over
-    ## cues) and multiply by the fan (S * W in act-r equation).
+  matches_category <- base_levels_cues_m[,"cat"] == retrieval_cues_m[,"cat"]
 
-    ## THIS IS NEW: We make VAR cues provide half the activation of other
-    ## cues (because they only provide only half of the {feature,value} pair)
-    cue.weights <- 1 - as.integer(is_variable_cue[1,])/2
-    cue.weights <- cue.weights/sum(cue.weights[retrieval_cues!="NULL"])
+  match_inc_var_exist <- match_inc_var &exists
 
-    W <- actr_par_retr$G * cue.weights;    
 
-#    W <- G/num_cues;  #ASK FELIX
+  #ASK FELIX
+  fan <- ddply(cbind(trial_info,match_inc_var_exist),.(exp,subj,item),colwise(sum,colnames(retrieval_cues)))
+
+  fan_update <- repeat_row(retrieval_cues=="VAR",each=nrow(unique_trials)) * retrieval_moment$VAR.fan
+
+  fan[colnames(fan)%in% cue_names]<- fan[colnames(fan)%in% cue_names] +fan_update
     
-    sw <- matrix(strength * W, nrow=num_chunks, ncol=num_features,byrow=TRUE);
-    
-    ## compute extra activation for each chunk; sum must ignore NA's because
-    ## those correspond to features that are not retrieval cues.
-    extra <- rowSums(match_inc_var * sw, na.rm=TRUE);    
-    
-    ## compute mismatch penalty
-    is.retrieval.cue <- (cues != "NULL") & (cues != "VAR");
+  strength <- retrieval_moment$mas - log(fan[colnames(fan)%in% cue_names])
 
-    if (actr_par_retr$var.mismatch.penalty) {
-      mismatch <- (!match & is.retrieval.cue)  | (is_variable_cue & is.nil);
-    } else {
-      mismatch <- (!match & is.retrieval.cue);
-    };
+  strength[strength==Inf] <- NA
 
-    ## mismatch <- (!match & is.retrieval.cue)  | (is_variable_cue & is.nil);
-    penalty <- rowSums(mismatch * actr_par_retr$match.penalty);
-    
+
+  ## compute source activation available for each cue (source spread over
+  ## cues) and multiply by the fan (S * W in act-r equation).
+
+  #ASK FELIX
+  ## THIS IS NEW: We make VAR cues provide half the activation of other
+  ## cues (because they only provide only half of the {feature,value} pair)
+  cue_weights_temp <- 1 - (is_variable_cue)/2
+ 
+  #ASK FELIX , WHY DO I DIVIDE BY SUM?????
+  #cue_weights <- cue_weights/sum(cue_weights[retrieval_cues!="NULL"])
+  #SHOULD IT BE LIKE THIS:
+ # cue_weights_temp_trial <- cbind(trial_info,cue_weights_temp)
+ no_nulls <- colnames(retrieval_cues[,retrieval_cues!="NULL"])
+
+ # div_cue_weights_temp <- ddply(cue_weights_temp_trial,.(exp,subj,item),colwise(sum,no_nulls))
+ # div_cue_weights_temp$div <- rowSums(div_cue_weights_temp[no_nulls])
+  
+  # cue_weights <- cue_weights_temp/rep(   div_cue_weights_temp$div,each=nchunks)
+cue_weights <- cue_weights_temp/rowSums(cue_weights_temp[,no_nulls])
+
+  W <- retrieval_moment_d$G  * cue_weights
+
+  strength_m <- repeat_row(strength,each=nchunks)
+  sw <- strength_m  * W
+
+  extra <- rowSums(match_inc_var * sw, na.rm=TRUE)    
+
+  is_retrieval_cue <- (retrieval_cues_m != "NULL") & (retrieval_cues_m != "VAR");
+
+
+
+  mismatch <- !match & is_retrieval_cue | 
+              (is_variable_cue & is_nil) & retrieval_moment_d$var.mismatch.penalty #this line is relevant if var.mismatch.penalty is T
+
+
+
+
+  penalty <- rowSums(mismatch *retrieval_moment_d$match.penalty)
     ## compute activation boost/penalty
     boost <- extra + penalty;
     
+    ## compute how distinctive each chunk is (proportional to base-level activation)
+    d.boost <- ifelse(retrieval_moment_d$modulate.by.distinct, retrieval_moment_d$distinctiveness + base_levels$activation ,1)
 
-    ## add to base-level
-    if (actr_par_retr$modulate.by.distinct) {
-      ## compute how distinctive each chunk is (proportional to base-level activation)
-      d.boost <- actr_par_retr$distinctiveness + base_levels$level;   
-      activation <- base_levels$level + boost * d.boost;
-    } else {
-      activation <- base_levels$level + boost;
-    };
+    activation <- base_levels$activation + boost * d.boost #d.boost=1 unless it's modulated by distinct
     
-    noise <- rlogis(num_chunks,0,actr_par_retr$ans) #
+    noise <- rlogis(nrow(base_levels),0,retrieval_moment_d$ans) #
     noisy_activation <- activation + noise;
 
-    ## make chunks that don't exist yet, or that don't match category cues,  have activation of -999
-    exists <- creation_moment <  retrieval_moment
-
+    ## make chunks that don't exist yet, or that don't match category cues,  have activation of -Inf
     nonexistence <- ifelse(exists,0,-Inf) #or NA?
 
-    miscategory <- ifelse(matches_category,0,actr_par_retr$cat.penalty)
+    miscategory <- ifelse(matches_category,0,retrieval_moment_d$cat.penalty)
 
     final_activation  <- noisy_activation+nonexistence +miscategory
 
-    final_activation <- c(final_activation,failure=actr_par_retr$rt)
+    base_levels$final_activation <- final_activation
+    base_levels$F <- retrieval_moment_d$F
+    #omission errors:
+    omissions<-retrieval_moment[c("exp","subj","item")]
+    omissions$wordn <-NA  
+    omissions$name <- "failure"
+    omissions$activation <-NA
+    omissions$final_activation <- retrieval_moment$rt
+    omissions$F <- retrieval_moment$F #I'll need it for latencies later
+
+    base_levels_output <- rbind(base_levels,omissions)
+
 
     #the winner is the one with the highest activation if it's over 'rt'
-    winner <- final_activation==max(final_activation)
+   
+    winner<- ddply(base_levels_output,.(exp,subj,item), function(df){
+     retrieved = df[which(max(df$final_activation)==df$final_activation),]$name
+     return(data.frame(retrieved=retrieved))
+      })
 
+   
+  base_levels_output <- merge(base_levels_output,winner,all.x=T)
+  base_levels_output$winner <- base_levels_output$retrieved == base_levels_output$name
 
-    #to add a null word when no word gets to the retrieval treshold
+    
 
+  ## compute latency given the noisy activation
 
-    ## compute latency given the noisy activation, and mean and sd over all the
-    ## monte carlo trials. Make non-existent chunks have a retrieval time of 9999.
-    final_latency <- ifelse(winner,(actr_par_retr$F * exp(-final_activation))*1000,NA)
+  base_levels_output$final_latency <- ifelse(base_levels_output$winner,(base_levels_output$F * exp(-base_levels_output$final_activation))*1000,NA)
 
    
 
 
-    
+  result <- base_levels_output[c("exp","subj","item","wordn","name","final_activation","winner","final_latency")]
 
-    result <- data.frame(chunk= names(final_latency),
-      name= c(as.character(chunks$name),NA) ,
-       final_latency=final_latency,
-       final_activation=final_activation,
-       winner=winner)
-
-
-      update_history <- data.frame(chunk = result[result$winner==1,]$chunk,
-        name = result[result$winner==1,]$name,
-        moment=retrieval_moment+result[result$winner==1,]$final_latency )
+  update_winner<-merge(result[result$winner,],cues,by=c("name"),all.x=T)
   
-    
-    newhistory <- rbind(history,update_history )
+  update_winner$created <- retrieval_moment$moment +update_winner$final_latency
 
 
-return(list(output=result, newhistory=newhistory,finished_at=newhistory[nrow(newhistory),]$moment))
+  update_history <- rbind.fill(history,update_winner )
+  newhistory <- update_history[,colnames(history)]
+
+return(list(output=result, newhistory=newhistory,finished_at=update_winner$created))
 }
 
 
  
-
-
