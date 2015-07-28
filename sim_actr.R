@@ -211,28 +211,51 @@ create_schedule <- function(unformated_schedule){
 
 
 
-summary.actr <- function(output,latencies=FALSE,by_subj=FALSE,removeNaN=FALSE){
-    
+summary.actr <- function(output,latencies=FALSE,by_subj=FALSE,pars=NULL,removeNaN=FALSE){
+
+  pars_subj <- NULL
+  all_par <- NULL
+  if(by_subj){
+    if(!is.null(pars)){
+    all_par <- output$actr_par[colnames(output$actr_par) %in% pars]
+    all_par$subj <- seq_len(nrow(all_par))
+
+    }
+
+    pars_subj <- c(pars,"subj")
+  }    
+  
 
  summ <-  ldply(output$results, function(l){
     df <- data.frame()
-    if(latencies & by_subj){
-    
-      df<- ddply(l$latencies,.(subj,retrieval_at),summarize,mean_latency = mean(latency), SE= sd(latency)/sqrt(length(latency)))
-    
-    } else if(latencies & !by_subj){
-      if(max(l$latencies$subj>1)){warning("SE is not corrected for subjects")}
-      warning
-      df <- ddply(l$latencies,.(retrieval_at),summarize,mean_latency = mean(latency), SE= sd(latency)/sqrt(length(latency)))
-    
-    } else if(!latencies & by_subj){
-    
-      df <- ddply(l$results,.(subj,retr,wordn,name),summarize,P=mean(winner),mean_latency=mean(final_latency,na.rm=T),mean_activation=mean(final_activation))
-    
-    } else if(!latencies & !by_subj){ 
+    if(latencies){
+      ddply_by <- c(pars_subj,"retrieval_at")
 
-      df<-  ddply(l$results,.(retr,wordn,name),summarize,P=mean(winner),mean_latency=mean(final_latency,na.rm=T),mean_activation=mean(final_activation))
+      if(!is.null(all_par)){
+        latencies <- merge(l$latencies,all_par,all.x=TRUE)  
+      } else {
+        latencies <-l$latencies
       }
+
+      
+
+      df<- ddply(latencies,ddply_by,summarize,mean_latency = mean(latency), SE= sd(latency)/sqrt(length(latency)))
+    
+     
+    } else if(!latencies){
+    
+      ddply_by <- c(pars_subj,"retr","wordn","name")
+
+     if(!is.null(all_par)){
+        results <- merge(l$results,all_par,all.x=TRUE)  
+      } else {
+        results <-l$results
+      }
+
+
+      df <- ddply(results,ddply_by,summarize,P=mean(winner),mean_latency=mean(final_latency,na.rm=T),mean_activation=mean(final_activation))
+    
+    }
     return(df)
   })
 
@@ -257,23 +280,34 @@ nitem<-  llply(output$results, function(l){
 }
 
 
-plot.actr <- function(output){
-  summary <- summary(output,latencies=TRUE)
+plot.actr <- function(output,pars=NULL){
 
+  by_subj <- ifelse(is.null(pars),FALSE,TRUE)
+  summary <- summary(output,latencies=TRUE,pars=pars,by_subj=by_subj) #only the first par
 
-  plot <- ggplot(summary, aes(x=.id, y=mean_latency, fill=.id))+ 
-          facet_grid(. ~ retrieval_at) + 
-          geom_bar(position=position_dodge(), stat="identity") +
-          geom_errorbar(aes(ymin=mean_latency-2*SE, ymax=mean_latency+2*SE),
-                  width=.2,                    # Width of the error bars
-                  position=position_dodge(.9))+
-          xlab("Experimental Condition") +
-    ylab("Latency") +
-    scale_fill_hue(name="Experimental Condition") +
-    ggtitle("Summary") +
-    #scale_y_continuous(breaks=seq(0:summary$)) +
-    theme_bw()
+  if(is.null(pars)){
+    plot <- ggplot(summary, aes(x=.id, y=mean_latency, fill=.id))+ 
+            facet_grid(. ~ retrieval_at) + 
+            geom_bar(position=position_dodge(), stat="identity") +
+            geom_errorbar(aes(ymin=mean_latency-2*SE, ymax=mean_latency+2*SE),
+                    width=.2,                    # Width of the error bars
+                    position=position_dodge(.9))+
+            xlab("Experimental Condition") +
+      ylab("Latency") +
+      scale_fill_hue(name="Experimental Condition") +
+      ggtitle("Summary") +
+      #scale_y_continuous(breaks=seq(0:summary$)) +
+      theme_bw()
+  } else {
+    plot <- ggplot(summary, aes_string(x=pars[1], y="mean_latency", color=".id",linetype=".id",shape=".id"))+ 
+            facet_grid(. ~ retrieval_at) + facet_grid(. ~ retrieval_at) + geom_point() + geom_smooth()+
 
+            xlab(paste("Value of act-r param",pars[1])) +
+      ylab("Latency")  +
+      ggtitle("Summary") +
+      #scale_y_continuous(breaks=seq(0:summary$)) +
+      theme_bw()
+  }
 
 
 
