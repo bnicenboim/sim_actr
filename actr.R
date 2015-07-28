@@ -223,7 +223,7 @@ retrieve <- function(cue_names,retrieval_cues,retrieval_moment,history) {
     omissions$final_activation <- retrieval_moment$rt
     omissions$F <- retrieval_moment$F #I'll need it for latencies later
 
-    base_levels_output <- rbind(base_levels,omissions)
+    base_levels_output <- rbind.fill(base_levels,omissions)
 
 
     #the winner is the one with the highest activation if it's over 'rt'
