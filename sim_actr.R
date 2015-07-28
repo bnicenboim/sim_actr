@@ -7,7 +7,8 @@ run_actr_each_condition <- function(data_list,actr_par=NULL,nsim=1) {
    }
 
   print("Starting to run model....")
-
+  print(deparse(substitute(data_list)))
+  print("****************")
   ## Read in the creation schedule:
   chunks <- create_schedule(data_list$creation_schedule)
 
@@ -115,10 +116,14 @@ run_actr_each_condition <- function(data_list,actr_par=NULL,nsim=1) {
     }
     
     
-results<-res    
+  results<-res    
+
+  #old ddply:
+  #latencies <- ddply(subset(results,winner==1),.(exp,subj,item,retrieval_at),summarize,latency=sum(final_latency))
+
+  latencies <- summarise(group_by(subset(results,winner==1),exp,subj,item,retrieval_at),latency=sum(final_latency))
 
 
-latencies <- ddply(subset(results,winner==1),.(exp,subj,item,retrieval_at),summarize,latency=sum(final_latency))
 
   complete_results =list(results=results,latencies=latencies,history=history)
   return(complete_results)
@@ -198,10 +203,12 @@ create_schedule <- function(unformated_schedule){
     stop(paste("Error in ",names(args)[1]," file or data.frame"))
   }
 
-  schedule <- t(schedule)
-  rownames(schedule) <- NULL
-  schedule<-data.frame(schedule)
-
+  #This is to flip the data frame in case moment/name cat etc are not the colnames
+  if(!"cat" %in% colnames(schedule)){
+    schedule <- t(schedule)
+    rownames(schedule) <- NULL
+    schedule<-data.frame(schedule)
+  }
   
   #validation of the row names
   colnames(schedule) <- make.names(colnames(schedule))
@@ -211,7 +218,7 @@ create_schedule <- function(unformated_schedule){
 
 
 
-summary.actr <- function(output,latencies=FALSE,by_subj=FALSE,pars=NULL,removeNaN=FALSE){
+summary.actr <- function(output,latencies=FALSE,by_subj=FALSE,pars=NULL,removeNaN=FALSE,abbreviate=TRUE){
 
   pars_subj <- NULL
   all_par <- NULL
@@ -237,11 +244,8 @@ summary.actr <- function(output,latencies=FALSE,by_subj=FALSE,pars=NULL,removeNa
         latencies <-l$latencies
       }
 
-      
-
-      df<- ddply(latencies,ddply_by,summarize,mean_latency = mean(latency), SE= sd(latency)/sqrt(length(latency)))
+      df<- ddply(latencies,ddply_by,summarize,Latency = mean(latency), SE= sd(latency)/sqrt(length(latency)))
     
-     
     } else if(!latencies){
     
       ddply_by <- c(pars_subj,"retr","wordn","name")
@@ -253,17 +257,25 @@ summary.actr <- function(output,latencies=FALSE,by_subj=FALSE,pars=NULL,removeNa
       }
 
 
-      df <- ddply(results,ddply_by,summarize,P=mean(winner),mean_latency=mean(final_latency,na.rm=T),mean_activation=mean(final_activation))
-    
+      df <- ddply(results,ddply_by,summarize,Retr_P=mean(winner),Latency=mean(final_latency,na.rm=T),mean_activation=mean(final_activation))
+
+      if(abbreviate){
+            df$name <- abbreviate(iconv(df$name, to='ASCII//TRANSLIT'),12,"both")
+      }
+
+
     }
     return(df)
   })
 
 
   if(removeNaN){
-    summ <- summ[!is.nan(summ$mean_latency),]
+    summ <- summ[!is.nan(summ$Latency),]
   }
-
+  
+  if(abbreviate){
+    summ$.id <- abbreviate(iconv(summ$.id, to='ASCII//TRANSLIT'),12,"both")
+  }
 
 nitem<-  llply(output$results, function(l){
     return(max(l$results$item))
@@ -286,10 +298,10 @@ plot.actr <- function(output,pars=NULL){
   summary <- summary(output,latencies=TRUE,pars=pars,by_subj=by_subj) #only the first par
 
   if(is.null(pars)){
-    plot <- ggplot(summary, aes(x=.id, y=mean_latency, fill=.id))+ 
+    plot <- ggplot(summary, aes(x=.id, y=Latency, fill=.id))+ 
             facet_grid(. ~ retrieval_at) + 
             geom_bar(position=position_dodge(), stat="identity") +
-            geom_errorbar(aes(ymin=mean_latency-2*SE, ymax=mean_latency+2*SE),
+            geom_errorbar(aes(ymin=Latency-2*SE, ymax=Latency+2*SE),
                     width=.2,                    # Width of the error bars
                     position=position_dodge(.9))+
             xlab("Experimental Condition") +
@@ -299,7 +311,7 @@ plot.actr <- function(output,pars=NULL){
       #scale_y_continuous(breaks=seq(0:summary$)) +
       theme_bw()
   } else {
-    plot <- ggplot(summary, aes_string(x=pars[1], y="mean_latency", color=".id",linetype=".id",shape=".id"))+ 
+    plot <- ggplot(summary, aes_string(x=pars[1], y="Latency", color=".id",linetype=".id",shape=".id"))+ 
             facet_grid(. ~ retrieval_at) + facet_grid(. ~ retrieval_at) + geom_point() + geom_smooth()+
 
             xlab(paste("Value of act-r param",pars[1])) +

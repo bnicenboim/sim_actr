@@ -18,6 +18,7 @@
 rm(list=ls())
 library(utils)
 library(plyr)
+library(dplyr)
 library(lme4)
 library(lme4)
 library(ggplot2)
@@ -46,7 +47,7 @@ RC <- list(
 #run_model will run nsims x num_experimental_items, while every row in actr_par is treated as a different subject
 
 
-sim_RC <- sim_actr(RC,nsim=10)
+sim_RC <- sim_actr(RC,nsim=100)
 
 summary(sim_RC,removeNaN=T)
 summary(sim_RC,latencies=TRUE)
@@ -65,7 +66,7 @@ actr_Gvar_subjs<- expand.grid(actr_Gvar)
 #assumes that everyline of actr_Gvar_subjs is comming from a different subject
 head(actr_Gvar_subjs)
 
-sim_RC_G <- sim_actr(RC, actr_par=actr_Gvar_subjs,nsim=1)
+sim_RC_G <- sim_actr(RC, actr_par=actr_Gvar_subjs,nsim=10)
 
 summary(sim_RC_G,removeNaN=T)
 summary(sim_RC_G,latencies=TRUE)
@@ -81,11 +82,11 @@ sim_data <- summary(sim_RC_G,latencies=TRUE,by_subj=T,pars="G")
 
 sim_data$G_group <- ifelse(scale(sim_data$G)>0,"high","low")
 
-ddply(sim_data,.(G_group,retrieval_at,.id),summarize,mean(mean_latency))
+ddply(sim_data,.(G_group,retrieval_at,.id),summarize,mean(Latency))
 
 
 sim_data$condition <- factor(sim_data$.id)
 contrasts(sim_data$condition) <- contr.sum(2)
 
-summary(m<-lmer(log(mean_latency)~condition *scale(G)+ (1|subj),data=sim_data,subset=retrieval_at=="VP2" ))
+summary(m<-lmer(log(Latency)~condition *scale(G)+ (1|subj),data=sim_data,subset=retrieval_at=="VP2" ))
 

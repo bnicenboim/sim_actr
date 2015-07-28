@@ -44,7 +44,7 @@ verify_actr_par <- function(actr_par){
     }
 
     if(all(model_par) & all(found_par)){
-      print("Parameters of act-r verified")
+      #print("Parameters of act-r verified")
     }
     return(actr_par)
 }
@@ -60,7 +60,13 @@ compute_base_levels <- function(retrieval_moment,history) {
   chunk_names <- unique(chistory$name)
   nchunks <- length(chunk_names)
   ## time since last retrieval for each retrieval (converted from milliseconds)
-  chistory <- merge(chistory,retrieval_moment[c("exp","subj","item","moment","d")])
+  
+  #chistory <- merge(chistory,retrieval_moment[c("exp","subj","item","moment","d")])
+
+  #new dplyr
+  chistory <- inner_join(chistory,retrieval_moment[c("exp","subj","item","moment","d")],by=c("exp", "subj", "item"))
+
+
   chistory$tj <- (chistory$moment - chistory$created)/1000
   
   
@@ -70,8 +76,12 @@ compute_base_levels <- function(retrieval_moment,history) {
   
   ## the decay function
   chistory$activation <- chistory$tj ^ -(chistory$d)
-  
-  base_levels<- ddply(chistory,.(exp,subj,item,wordn,name),summarize, activation=log(sum(activation,na.rm=TRUE)))
+
+  #old ddply:  
+  #  base_levels<- ddply(chistory,.(exp,subj,item,wordn,name),summarize, activation=log(sum(activation,na.rm=TRUE)))
+
+  base_levels<- summarise(group_by(chistory, exp,subj,item,wordn,name),
+    activation=log(sum(activation,na.rm=TRUE)))
 
   
   base_levels$activation <- ifelse(is.infinite(base_levels$activation),0,base_levels$activation)
@@ -94,7 +104,9 @@ retrieve <- function(cue_names,retrieval_cues,retrieval_moment,history) {
   nchunks <- length(unique(base_levels$name))
 
   cues <- unique(history[colnames(history) %in% c("name",cue_names)])
-  base_levels_cues <- merge(base_levels,cues,by="name",all.x=TRUE,all.y=FALSE,sort=FALSE)
+  #dplyr
+  #base_levels_cues <- merge(base_levels,cues,by="name",all.x=TRUE,all.y=FALSE,sort=FALSE)
+  base_levels_cues <- left_join(base_levels,cues,by="name")
   base_levels_cues <- base_levels_cues[order(base_levels_cues$exp,base_levels_cues$subj,base_levels_cues$item,base_levels_cues$wordn),] #previous order
 
   trial_info <-base_levels_cues[c("exp","subj","item")]
@@ -114,7 +126,12 @@ retrieve <- function(cue_names,retrieval_cues,retrieval_moment,history) {
   match_inc_var <- match | (is_variable_cue & !is_nil)
 
    ## checks which chunks exist at this moment
-  earliest_history <- ddply(subset(history,!name %in% "failure") ,.(exp,subj,item,wordn,name),summarize,earliest_moment= min(created))
+#old ddply
+#  earliest_history <- ddply(subset(history,!name %in% "failure") ,.(exp,subj,item,wordn,name),summarize,earliest_moment= min(created))
+
+ earliest_history <-  summarise(group_by(subset(history,!name %in% "failure"), exp,subj,item,wordn,name),earliest_moment= min(created))
+
+
   exists <- earliest_history$earliest_moment < retrieval_moment_d$moment
 
 
@@ -124,7 +141,12 @@ retrieve <- function(cue_names,retrieval_cues,retrieval_moment,history) {
 
 
   #ASK FELIX
-  fan <- ddply(cbind(trial_info,match_inc_var_exist),.(exp,subj,item),colwise(sum,colnames(retrieval_cues)))
+  match_inc_var_exist_trial_info<- cbind(trial_info,match_inc_var_exist)
+  #old ddply
+  #fan <- ddply(match_inc_var_exist_trial_info,.(exp,subj,item),colwise(sum,colnames(retrieval_cues)))
+
+  fan <- summarise_each(group_by(match_inc_var_exist_trial_info,exp,subj,item),funs(sum))
+
 
   fan_update <- repeat_row(retrieval_cues=="VAR",each=nrow(unique_trials)) * retrieval_moment$VAR.fan
 
@@ -153,7 +175,7 @@ retrieve <- function(cue_names,retrieval_cues,retrieval_moment,history) {
  # div_cue_weights_temp$div <- rowSums(div_cue_weights_temp[no_nulls])
   
   # cue_weights <- cue_weights_temp/rep(   div_cue_weights_temp$div,each=nchunks)
-cue_weights <- cue_weights_temp/rowSums(cue_weights_temp[,no_nulls])
+  cue_weights <- cue_weights_temp/rowSums(cue_weights_temp[,no_nulls])
 
   W <- retrieval_moment_d$G  * cue_weights
 
@@ -206,13 +228,18 @@ cue_weights <- cue_weights_temp/rowSums(cue_weights_temp[,no_nulls])
 
     #the winner is the one with the highest activation if it's over 'rt'
    
-    winner<- ddply(base_levels_output,.(exp,subj,item), function(df){
-     retrieved = df[which(max(df$final_activation)==df$final_activation),]$name
-     return(data.frame(retrieved=retrieved))
-      })
+   #old ddply
+    # winner<- ddply(base_levels_output,.(exp,subj,item), function(df){
+    #  retrieved = df[which(max(df$final_activation)==df$final_activation),]$name
+    #  return(data.frame(retrieved=retrieved))
+    #   })
+    winner <- filter(group_by(base_levels_output,exp,subj,item),  max(final_activation) ==final_activation)
+    winner$retrieved <- winner$name
+    winner<-winner[c("exp","subj","item","retrieved")]
 
-   
-  base_levels_output <- merge(base_levels_output,winner,all.x=T)
+  #dplyr
+  #base_levels_output <- merge(base_levels_output,winner,all.x=T)
+  base_levels_output <- left_join(base_levels_output,winner,by=c("exp", "subj", "item"))
   base_levels_output$winner <- base_levels_output$retrieved == base_levels_output$name
 
     
@@ -226,7 +253,9 @@ cue_weights <- cue_weights_temp/rowSums(cue_weights_temp[,no_nulls])
 
   result <- base_levels_output[c("exp","subj","item","wordn","name","final_activation","winner","final_latency")]
 
-  update_winner<-merge(result[result$winner,],cues,by=c("name"),all.x=T)
+ #dplyr
+ # update_winner<-merge(result[result$winner,],cues,by=c("name"),all.x=T)
+  update_winner<-left_join(result[result$winner,],cues,by=c("name"))
   
   update_winner$created <- retrieval_moment$moment +update_winner$final_latency
 
