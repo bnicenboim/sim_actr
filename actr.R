@@ -74,8 +74,7 @@ compute_base_levels <- function(retrieval_moment,history) {
   base_levels<- ddply(chistory,.(exp,subj,item,wordn,name),summarize, activation=log(sum(activation,na.rm=TRUE)))
 
   
-
-   base_levels[is.infinite(base_levels$activation),]$activation<- 0
+  base_levels$activation <- ifelse(is.infinite(base_levels$activation),0,base_levels$activation)
 
   return(base_levels);
 }
