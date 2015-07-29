@@ -1,7 +1,0 @@
-moment	DP2	VP2	VP1
-cat	NP	DP	NP
-mom_cat	IP	CP	IP
-role	spec	spec	spec
-number	sing	NULL	sing
-NOM	yes	NULL	yes
-ACC	NULL	NULL	NULL

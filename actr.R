@@ -121,37 +121,42 @@ retrieve <- function(cue_names,retrieval_cues,retrieval_moment,history) {
 
   match <- base_levels_cues_m == retrieval_cues_m
 
-  is_nil <- base_levels_cues_m == "nil";    
-  is_variable_cue <- retrieval_cues_m =="VAR"  ##ASK FELIX
+  #nil are irrelevant features?
+  is_nil <- base_levels_cues_m == "nil"
+
+  #VAR is cue that's going to match any feature that exists (not nil)
+  is_variable_cue <- retrieval_cues_m =="VAR" 
   match_inc_var <- match | (is_variable_cue & !is_nil)
 
    ## checks which chunks exist at this moment
-#old ddply
-#  earliest_history <- ddply(subset(history,!name %in% "failure") ,.(exp,subj,item,wordn,name),summarize,earliest_moment= min(created))
+  if(0){
+   earliest_history <-  summarise(group_by(subset(history,!name %in% "failure"), exp,subj,item,wordn,name),earliest_moment= min(created))
+  
 
- earliest_history <-  summarise(group_by(subset(history,!name %in% "failure"), exp,subj,item,wordn,name),earliest_moment= min(created))
-
-
-  exists <- earliest_history$earliest_moment < retrieval_moment_d$moment
-
+    exists <- earliest_history$earliest_moment < retrieval_moment_d$moment
+  }
+  # SEEE IF IT WORKS!!!!!!!!
+  exists <- !is.infinite(base_levels$activation) & !is.na(base_levels$activation) &  !is.nan(base_levels$activation)
 
   matches_category <- base_levels_cues_m[,"cat"] == retrieval_cues_m[,"cat"]
 
-  match_inc_var_exist <- match_inc_var &exists
+  match_inc_var_exist <- match_inc_var & exists
 
 
-  #ASK FELIX
   match_inc_var_exist_trial_info<- cbind(trial_info,match_inc_var_exist)
   #old ddply
   #fan <- ddply(match_inc_var_exist_trial_info,.(exp,subj,item),colwise(sum,colnames(retrieval_cues)))
 
+  #we calculate the fan for each cue ignoring the features of other cues (values in columns). In real act-r, the fan is computed over all slots in all chunks 
   fan <- summarise_each(group_by(match_inc_var_exist_trial_info,exp,subj,item),funs(sum))
+  print(fan)
 
-
+  #this is some Rick Lewis thing:
   fan_update <- repeat_row(retrieval_cues=="VAR",each=nrow(unique_trials)) * retrieval_moment$VAR.fan
 
   fan[colnames(fan)%in% cue_names]<- fan[colnames(fan)%in% cue_names] +fan_update
-    
+
+  #maximum associated strenght(maximum of spreading activation that can go from a cue to a chunk) - log of fan => the bigger the fan, => less strength
   strength <- retrieval_moment$mas - log(fan[colnames(fan)%in% cue_names])
 
   strength[strength==Inf] <- NA
@@ -159,8 +164,6 @@ retrieve <- function(cue_names,retrieval_cues,retrieval_moment,history) {
 
   ## compute source activation available for each cue (source spread over
   ## cues) and multiply by the fan (S * W in act-r equation).
-
-  #ASK FELIX
   ## THIS IS NEW: We make VAR cues provide half the activation of other
   ## cues (because they only provide only half of the {feature,value} pair)
   cue_weights_temp <- 1 - (is_variable_cue)/2
@@ -177,17 +180,20 @@ retrieve <- function(cue_names,retrieval_cues,retrieval_moment,history) {
   # cue_weights <- cue_weights_temp/rep(   div_cue_weights_temp$div,each=nchunks)
   cue_weights <- cue_weights_temp/rowSums(cue_weights_temp[,no_nulls])
 
-  W <- retrieval_moment_d$G  * cue_weights
+  W <- retrieval_moment_d$G  * cue_weights #= G/number of relevant features (if VAR isn't set)
 
   strength_m <- repeat_row(strength,each=nchunks)
+  
+  #final amount of spreading activation from cue to features:
   sw <- strength_m  * W
 
+  #where it doesn't match there's no spreading activation:
   extra <- rowSums(match_inc_var * sw, na.rm=TRUE)    
 
   is_retrieval_cue <- (retrieval_cues_m != "NULL") & (retrieval_cues_m != "VAR");
 
-
-
+  #check the var thing again
+  #TRUE is the cues which is relevant and doesn't match
   mismatch <- !match & is_retrieval_cue | 
               (is_variable_cue & is_nil) & retrieval_moment_d$var.mismatch.penalty #this line is relevant if var.mismatch.penalty is T
 
@@ -196,34 +202,35 @@ retrieve <- function(cue_names,retrieval_cues,retrieval_moment,history) {
 
   penalty <- rowSums(mismatch *retrieval_moment_d$match.penalty)
     ## compute activation boost/penalty
-    boost <- extra + penalty;
+  
+  boost <- extra + penalty;
     
-    ## compute how distinctive each chunk is (proportional to base-level activation)
-    d.boost <- ifelse(retrieval_moment_d$modulate.by.distinct, retrieval_moment_d$distinctiveness + base_levels$activation ,1)
+  ## compute how distinctive each chunk is (proportional to base-level activation)
+  d.boost <- ifelse(retrieval_moment_d$modulate.by.distinct, retrieval_moment_d$distinctiveness + base_levels$activation ,1)
 
-    activation <- base_levels$activation + boost * d.boost #d.boost=1 unless it's modulated by distinct
+  activation <- base_levels$activation + boost * d.boost #d.boost=1 unless it's modulated by distinct
     
-    noise <- rlogis(nrow(base_levels),0,retrieval_moment_d$ans) #
-    noisy_activation <- activation + noise;
+  noise <- rlogis(nrow(base_levels),0,retrieval_moment_d$ans) #
+  noisy_activation <- activation + noise;
 
     ## make chunks that don't exist yet, or that don't match category cues,  have activation of -Inf
-    nonexistence <- ifelse(exists,0,-Inf) #or NA?
+  nonexistence <- ifelse(exists,0,-Inf) #or NA?
 
-    miscategory <- ifelse(matches_category,0,retrieval_moment_d$cat.penalty)
+  miscategory <- ifelse(matches_category,0,retrieval_moment_d$cat.penalty)
 
-    final_activation  <- noisy_activation+nonexistence +miscategory
+  final_activation  <- noisy_activation+nonexistence +miscategory
 
-    base_levels$final_activation <- final_activation
-    base_levels$F <- retrieval_moment_d$F
-    #omission errors:
-    omissions<-retrieval_moment[c("exp","subj","item")]
-    omissions$wordn <-NA  
-    omissions$name <- "failure"
-    omissions$activation <-NA
-    omissions$final_activation <- retrieval_moment$rt
-    omissions$F <- retrieval_moment$F #I'll need it for latencies later
+  base_levels$final_activation <- final_activation
+  base_levels$F <- retrieval_moment_d$F
+  #omission errors:
+  omissions<-retrieval_moment[c("exp","subj","item")]
+  omissions$wordn <-NA  
+  omissions$name <- "failure"
+  omissions$activation <-NA
+  omissions$final_activation <- retrieval_moment$rt
+  omissions$F <- retrieval_moment$F #I'll need it for latencies later
 
-    base_levels_output <- rbind.fill(base_levels,omissions)
+  base_levels_output <- rbind.fill(base_levels,omissions)
 
 
     #the winner is the one with the highest activation if it's over 'rt'
@@ -233,7 +240,7 @@ retrieve <- function(cue_names,retrieval_cues,retrieval_moment,history) {
     #  retrieved = df[which(max(df$final_activation)==df$final_activation),]$name
     #  return(data.frame(retrieved=retrieved))
     #   })
-    winner <- filter(group_by(base_levels_output,exp,subj,item),  max(final_activation) ==final_activation)
+  winner <- filter(group_by(base_levels_output,exp,subj,item),  max(final_activation) ==final_activation)
     winner$retrieved <- winner$name
     winner<-winner[c("exp","subj","item","retrieved")]
 

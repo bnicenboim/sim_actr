@@ -253,7 +253,7 @@ summary.actr <- function(output,latencies=FALSE,by_subj=FALSE,pars=NULL,removeNa
       df<- summarise(grouped,Latency = mean(latency), SE= sd(latency)/sqrt(length(latency)))
 
     } else if(!latencies){
-      by <- c(pars_subj,"retr","wordn","name")
+      by <- c(pars_subj,"retr","wordn","name","retrieval_at")
       dots <- lapply(by, as.symbol)
 
       if(!is.null(all_par)){
