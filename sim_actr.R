@@ -103,6 +103,7 @@ run_actr_each_condition <- function(data_list,actr_par=NULL,nsim=1) {
 
     history <- history[order(history$exp,history$subj,history$item,history$created),]
 
+    #retrieval using act-r formulas here:
     ret <- retrieve(cue_names,retrieval_cues, retrieval_moment,history)
 
     history <- ret$newhistory
@@ -220,53 +221,57 @@ create_schedule <- function(unformated_schedule){
 
 summary.actr <- function(output,latencies=FALSE,by_subj=FALSE,pars=NULL,removeNaN=FALSE,abbreviate=TRUE){
 
+  #set the right groups for the dplyr later:
   pars_subj <- NULL
   all_par <- NULL
   if(by_subj){
     if(!is.null(pars)){
-    all_par <- output$actr_par[colnames(output$actr_par) %in% pars]
-    all_par$subj <- seq_len(nrow(all_par))
-
+      all_par <- output$actr_par[colnames(output$actr_par) %in% pars]
+      all_par$subj <- seq_len(nrow(all_par))
     }
 
     pars_subj <- c(pars,"subj")
   }    
   
 
- summ <-  ldply(output$results, function(l){
+  summ <-  ldply(output$results, function(l){
+  
     df <- data.frame()
+
     if(latencies){
-      ddply_by <- c(pars_subj,"retrieval_at")
+      by <- c(pars_subj,"retrieval_at")
+      # Convert character vector to list of symbols
+      dots <- lapply(by, as.symbol)
 
       if(!is.null(all_par)){
-        latencies <- merge(l$latencies,all_par,all.x=TRUE)  
+        latencies <- left_join(l$latencies,all_par)
+        grouped <- group_by_(latencies,.dots=dots)
       } else {
-        latencies <-l$latencies
+        grouped <- group_by_(l$latencies,.dots=dots)
       }
 
-      df<- ddply(latencies,ddply_by,summarize,Latency = mean(latency), SE= sd(latency)/sqrt(length(latency)))
-    
+      df<- summarise(grouped,Latency = mean(latency), SE= sd(latency)/sqrt(length(latency)))
+
     } else if(!latencies){
-    
-      ddply_by <- c(pars_subj,"retr","wordn","name")
+      by <- c(pars_subj,"retr","wordn","name")
+      dots <- lapply(by, as.symbol)
 
-     if(!is.null(all_par)){
-        results <- merge(l$results,all_par,all.x=TRUE)  
+      if(!is.null(all_par)){
+        results <- left_join(l$results,all_par)
+        grouped <- group_by_(results,.dots=dots)
+  
       } else {
-        results <-l$results
+        grouped <- group_by_(l$results,.dots=dots)
       }
 
-
-      df <- ddply(results,ddply_by,summarize,Retr_P=mean(winner),Latency=mean(final_latency,na.rm=T),mean_activation=mean(final_activation))
+      df <- summarise(grouped,Retr_P=mean(winner),Latency=mean(final_latency,na.rm=T),mean_activation=mean(final_activation))
 
       if(abbreviate){
-            df$name <- abbreviate(iconv(df$name, to='ASCII//TRANSLIT'),12,"both")
+        df$name <- abbreviate(iconv(df$name, to='ASCII//TRANSLIT'),12,"both")
       }
-
-
     }
     return(df)
-  })
+  }) #end of ldply
 
 
   if(removeNaN){
@@ -277,7 +282,7 @@ summary.actr <- function(output,latencies=FALSE,by_subj=FALSE,pars=NULL,removeNa
     summ$.id <- abbreviate(iconv(summ$.id, to='ASCII//TRANSLIT'),12,"both")
   }
 
-nitem<-  llply(output$results, function(l){
+  nitem<-  llply(output$results, function(l){
     return(max(l$results$item))
   })
 
@@ -288,6 +293,7 @@ nitem<-  llply(output$results, function(l){
     paste("# Number of simulated subjects: ",nrow(output$actr_par),"\n"))
 
   cat(paste(lines,collapse="\n"))
+
   return(summ)
 }
 
@@ -295,7 +301,7 @@ nitem<-  llply(output$results, function(l){
 plot.actr <- function(output,pars=NULL){
 
   by_subj <- ifelse(is.null(pars),FALSE,TRUE)
-  summary <- summary(output,latencies=TRUE,pars=pars,by_subj=by_subj) #only the first par
+  summary <- summary(output,latencies=TRUE,pars=pars[1],by_subj=by_subj) #only the first par
 
   if(is.null(pars)){
     plot <- ggplot(summary, aes(x=.id, y=Latency, fill=.id))+ 
