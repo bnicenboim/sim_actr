@@ -17,7 +17,7 @@
 
 rm(list=ls())
 library(utils)
-library(plyr)
+#library(plyr)
 library(dplyr)
 library(lme4)
 library(lme4)
@@ -25,8 +25,13 @@ library(ggplot2)
 source("actr.R")
 source("sim_actr.R")
 
-"the reporter WHO SENT the photographer to the editor HOPED..."
-SRC<-"
+read_data_frame <- function(text){
+  #Convenience function to read tables in Hadley Wickham's data_frame
+  as_data_frame(read.table(text=text,header=T,stringsAsFactors=F))
+}
+
+#the reporter WHO SENT the photographer to the editor HOPED...
+SRC <- read_data_frame("
 name             created cat mom_cat role number case
 the_reporter     0       NP  IP      spec sing   nom
 WHO              450     DP  CP      spec sing    nom
@@ -34,22 +39,21 @@ SENT             650     VP  I-bar   comp sing   nil
 the_photographer 800     NP  I-bar   spec sing   acc
 to_the_editor    1400    NP  VP      comp sing   acc
 HOPED            1850    VP  IP      comp sing   nil
-"
-SRC_t <- read.table(text=SRC,header=T)
+")
 
-Retr_SRC<-"
+
+retr_SRC<- read_data_frame("
 moment           cat mom_cat role number case
 WHO              NP  IP      spec sing   nom
 SENT             DP  CP      spec sing   nom
 the_photographer VP  I-bar   comp sing   nil
 to_the_editor    VP  I-bar   comp sing   nil
 HOPED            NP  IP      spec sing   nom
-"
-Retr_SRC_t <- read.table(text=Retr_SRC,header=T)
+")
+
 
 #"the reporter WHO the photographer SENT to the editor HOPED..."
-
-ORC<-"
+ORC <- read_data_frame("
 name             created cat mom_cat role number case
 the_reporter     0       NP  IP      spec sing   nom
 WHO              450     DP  CP      spec sing    acc
@@ -57,19 +61,18 @@ the_photographer 600     NP  I-bar   spec sing   nom
 SENT             1050    VP  I-bar   comp sing   nil
 to_the_editor    1450    NP  VP      comp sing   acc
 HOPED            1900    VP  IP      comp sing   nil
-"
-ORC_t <- read.table(text=ORC,header=T)
+")
 
-Retr_ORC<-"
+
+
+retr_ORC<-read_data_frame("
 moment           cat mom_cat role number case
 WHO              NP  IP      spec sing   nom
 SENT             DP  CP      spec sing   acc
 SENT             NP  I-bar   spec sing   nom
 to_the_editor    VP  I-bar   comp sing   nil
 HOPED            NP  IP      spec sing   nom
-"
-Retr_ORC_t <- read.table(text=Retr_ORC,header=T)
-
+")
 
 
 
@@ -78,16 +81,16 @@ RC <- list(
                   ## "the reporter WHO SENT the photographer to the editor HOPED..."                  
                   SRC=list(
                        num_experimental_items = 10,
-                       creation_schedule = SRC_t, #or data frame or matrix
-                       retrieval_schedule = Retr_SRC_t, #or data frame or matrix
-                       procedural_duration = 100),
+                       creation_schedule = SRC, 
+                       retrieval_schedule = retr_SRC, 
+                       procedural_duration = 50), 
 
                   ## "the reporter WHO the photographer SENT to the editor HOPED..."                  
                   ORC=list(
                        num_experimental_items = 10, 
-                       creation_schedule = ORC_t,
-                       retrieval_schedule = Retr_ORC_t,
-                       procedural_duration = 150)
+                       creation_schedule = ORC,
+                       retrieval_schedule = retr_ORC,
+                       procedural_duration = 150) 
                   )
 
 
@@ -95,40 +98,43 @@ RC <- list(
 #run_model will run nsims x num_experimental_items, while every row in actr_par is treated as a different subject
 
 
-sim_RC <- sim_actr(RC,nsim=1)
+sim_RC <- sim_actr(RC,nsim=100)
 
-summary(sim_RC,removeNaN=F)
-summary(sim_RC,latencies=TRUE)
+print(summary(sim_RC))
+print(summary(sim_RC),removeNaN=T)
+
 
 plot(sim_RC)
+
+
 
 
 
 ### Assuming individual differences in WMC:
 
 
-actr_Gvar <- actr_default
+actr_Gvar <- actr_defaults
 actr_Gvar$G <- sort(rnorm(80,1,0.25))
-actr_Gvar_subjs<- expand.grid(actr_Gvar)
+actr_Gvar_subjs<- as_data_frame(expand.grid(actr_Gvar))
 
 #assumes that everyline of actr_Gvar_subjs is comming from a different subject
 head(actr_Gvar_subjs)
 
 sim_RC_G <- sim_actr(RC, actr_par=actr_Gvar_subjs,nsim=1)
 
-summary(sim_RC_G,removeNaN=T)
-summary(sim_RC_G,latencies=TRUE)
-
+print(summary(sim_RC_G),minlength=8)
 
 plot(sim_RC_G,pars="G")
 
 
 #other analysis:
-sim_data <- summary(sim_RC_G,latencies=TRUE,by_subj=T,pars="G")
+sim_data <- by_subj(sim_RC_G,pars="G")
 
 sim_data$G_group <- ifelse(scale(sim_data$G)>0,"high","low")
 
-ddply(sim_data,.(G_group,retrieval_at,.id),summarize,mean(Latency))
+summarise(group_by_(sim_data,
+  .dots=c("G_group","retrieval_at",".id"))
+,mean(Latency))
 
 
 sim_data$condition <- factor(sim_data$.id)
