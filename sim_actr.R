@@ -30,8 +30,7 @@ run_actr_each_condition <- function(data_list,actr_par=NULL,nsim=1,debug=F) {
   #all this to take all the column that are left from created
   cue_names <- colnames(chunks[(which(colnames(chunks)=="created")+1):ncol(chunks)])
   #everything after moment is a retrieval cue
-  retr_cue_names <- colnames(select(retrievals,-moment ))
-  
+  retr_cue_names <- as.character(select_vars(colnames(retrievals), -one_of(c("moment","name"))))
   #check if retrieval and creation have the same cues
   #(catch if there's a typo)
   if(!all(cue_names %in% retr_cue_names) | !all(retr_cue_names %in% cue_names)  ) {
@@ -114,8 +113,12 @@ run_actr_each_condition <- function(data_list,actr_par=NULL,nsim=1,debug=F) {
 
 
     current_retr <- retrievals[r,]
-    scheduled_moment  <- chunks[chunks$name %in% current_retr$moment,]$created
 
+    if("moment" %in% colnames(chunks)){
+      scheduled_moment  <- chunks[chunks$moment %in% current_retr$moment,]$created
+    }else {
+      scheduled_moment  <- chunks[chunks$name %in% current_retr$moment,]$created
+     }
 
     retrieval_moment$now <- pmax(available_moment$available_at, scheduled_moment )
 
@@ -131,7 +134,11 @@ run_actr_each_condition <- function(data_list,actr_par=NULL,nsim=1,debug=F) {
     ##############
 
     if(any(is.na(ret$winner$accessed))){
-      print(paste("retrieval",r))
+      print(paste("Retrieval error at:",r))
+      print(summary(history_till_now))
+      summary(ret$actr_sim)
+      summary(ret$winners)
+
       stop("accessed is = NA!!! at")
     }
 
@@ -341,22 +348,32 @@ sanity_check <- function(chunks,retrievals){
   must_cols_cs <- c("name","created","cat") 
   if(!all(must_cols_cs %in% colnames(chunks))){
      missing_cols <-must_cols_cs[which(!must_cols_cs %in% colnames(chunks))]
-    stop(paste("Column",missing_cols,"missing from creation_schedule"))
+    stop(paste("Column",missing_cols,"missing from creation schedule"))
   }
 
   #check for the obligatory columns in retrieval schedule
   must_cols_rs <- c("moment","cat") 
   if(!all(must_cols_rs %in% colnames(retrievals))){
      missing_cols <-must_cols_rs[which(!must_cols_rs %in% colnames(retrievals))]
-    stop(paste("Column",missing_cols,"missing from retrievals_schedule"))
+    stop(paste("Column",missing_cols,"missing from retrievals schedule"))
   }
 
   #check if the moments from the retrieval schedule exist in the creation schedule
-  if(!all(retrievals$moment %in% chunks$name)){
+  if(!all(retrievals$moment %in% chunks$name | retrievals$moment %in% chunks$moment)){
     missing_name <-retrievals[which(!retrievals$moment %in% chunks$name),]$moment
 
-     stop(paste("Moment '",missing_name,"' missing from creation_schedule's name"))
+     stop(paste("Moment '",missing_name,"' missing from creation schedule's name"))
   }
  
+  if(any(is.na(chunks))){
+    stop("There's an NA in the creation schedule")
+  }
+
+  if(any(is.na(retrievals))){
+    stop("There's an NA in the retrievals schedule")
+  }
+
+
+
 }
 

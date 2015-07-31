@@ -205,28 +205,33 @@ retrieve <- function(cue_names,retrieval_cues,retrieval_moment,history_till_now)
   
   winner <- filter(group_by(base_levels_output,exp,subj,item),  max(final_activation) == final_activation)
 
+  if(any(is.na(base_levels_output$final_activation)) | any(is.nan(base_levels_output$final_activation))){
+    stop("Some of the activations is NA or NAN. Something is wrong!")
+  }
   winner$retrieved <- winner$name
   
   winner<-winner[c("exp","subj","item","retrieved")]
 
   #dplyr
-  #base_levels_output <- merge(base_levels_output,winner,all.x=T)
-  base_levels_output <- left_join(base_levels_output,winner,by=c("exp", "subj", "item"))
-  base_levels_output$winner <- base_levels_output$retrieved == base_levels_output$name
+  
+  #semi join to avoid adding rows with NAs, because then the comparison in the next line won't work
+  base_levels_final <- inner_join(base_levels_output,winner,by=c("exp", "subj", "item"))
+  base_levels_final$winner <- base_levels_final$retrieved == base_levels_final$name
 
-    
+  #check
+  #data.frame(base_levels_final[is.na(base_levels_final$retrieved),])
 
   ## compute latency given the noisy activation
 
-  base_levels_output$final_latency <- ifelse(base_levels_output$winner,(base_levels_output$F * exp(-base_levels_output$final_activation))*1000,NA)
+  base_levels_final$final_latency <- ifelse(base_levels_final$winner,(base_levels_final$F * exp(-base_levels_final$final_activation))*1000,NA)
 
    
-  base_levels_output <- select(base_levels_output,exp,subj,item,name,chunkn,winner,final_activation,final_latency,retrieved,everything())
+  base_levels_final <- select(base_levels_final,exp,subj,item,name,chunkn,winner,final_activation,final_latency,retrieved,everything())
   
 
 
 
-  winners<- base_levels_output[base_levels_output$winner==1,]
+  winners<- base_levels_final[base_levels_final$winner==1,]
   
   winners$accessed <- winners$now +winners$final_latency
 
@@ -236,7 +241,7 @@ retrieve <- function(cue_names,retrieval_cues,retrieval_moment,history_till_now)
   
   newhistory_till_now <- bind_rows(history_till_now,winners)
 
-return(list(actr_sim=base_levels_output, newhistory_till_now=newhistory_till_now,winners=winners))
+return(list(actr_sim=base_levels_final, newhistory_till_now=newhistory_till_now,winners=winners))
 }
 
 
